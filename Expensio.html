@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Expensio — Monthly Budget & Day Items (Client-only)</title>
+
+<!-- External libs -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://apis.google.com/js/api.js" defer></script>
+
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#9aa7c1; --accent:#4f46e5;
+    --good:#16a34a; --warn:#f59e0b; --bad:#ef4444;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  body{margin:0;background:linear-gradient(180deg,#071124 0%, #071022 100%);color:#e6eef8;min-height:100vh;padding:16px;display:flex;flex-direction:column;gap:16px}
+  header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  h1{margin:0;font-size:1.05rem}
+  .top-row{display:flex;gap:12px;align-items:center;width:100%;flex-wrap:wrap}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:12px;border-radius:12px;box-shadow: 0 6px 18px rgba(2,6,23,0.6); border:1px solid rgba(255,255,255,0.03)}
+  .controls{display:flex;gap:8px;align-items:center}
+  label{font-size:0.78rem;color:var(--muted)}
+  input[type="month"], input[type="number"], input[type="date"], input[type="text"], select{
+    background:transparent;border:1px solid rgba(255,255,255,0.06); padding:8px;border-radius:8px;color:inherit;
+  }
+  input[type="number"]{width:120px}
+  .summary{display:flex;gap:12px;align-items:center}
+  .bar-wrap{width:260px;background:rgba(255,255,255,0.04);border-radius:999px;overflow:hidden;height:14px}
+  .bar{height:100%;width:0%;background:linear-gradient(90deg,var(--good),#8ef7b9);transition:width .4s}
+  main{display:flex;gap:16px;flex-direction:column}
+  .layout{display:grid;grid-template-columns:1fr 360px;gap:16px}
+  @media(max-width:920px){.layout{grid-template-columns:1fr;}}
+  /* calendar */
+  .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+  .weekday{font-size:0.75rem;color:var(--muted);text-align:center}
+  .day{
+    min-height:84px;padding:8px;border-radius:10px; background:transparent;border:1px dashed rgba(255,255,255,0.03);
+    display:flex;flex-direction:column;justify-content:flex-start;gap:8px;font-size:0.8rem;
+  }
+  .day .date-num{font-weight:600}
+  .today {outline:2px solid rgba(79,70,229,0.15);backdrop-filter: blur(4px)}
+  .day .items-sum{font-size:0.75rem;color:var(--muted)}
+  .add-item-btn{font-size:0.75rem;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:rgba(255,255,255,0.01)}
+  /* side panel */
+  .side{display:flex;flex-direction:column;gap:12px}
+  .day-editor{display:flex;flex-direction:column;gap:8px}
+  .items-list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;padding-right:6px}
+  .row{display:flex;gap:8px;align-items:center}
+  .row input[type="text"]{flex:1}
+  .row input[type="number"]{width:120px}
+  .row button{padding:8px;border-radius:8px;border:none;background:rgba(255,255,255,0.02);color:var(--muted)}
+  .totals{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  .progress{height:12px;border-radius:999px;background:rgba(255,255,255,0.03);overflow:hidden}
+  .progress > i{display:block;height:100%}
+  .muted{color:var(--muted);font-size:0.85rem}
+  .btn{padding:8px 12px;border-radius:10px;border:none;background:var(--accent);color:white;font-weight:600;cursor:pointer}
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04)}
+  footer{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:0.85rem;color:var(--muted)}
+  .tiny{font-size:0.78rem;color:var(--muted)}
+  /* status pill */
+  .pill{padding:4px 8px;border-radius:999px;font-size:0.76rem;border:1px solid rgba(255,255,255,0.03)}
+  /* small utilities */
+  .flex{display:flex;align-items:center;gap:8px}
+  .center{display:flex;align-items:center;justify-content:center}
+  /* printable day (off-screen but rendered) */
+  #printable {
+    position: fixed;
+    left: -9999px;
+    top: 0;
+    width: 800px;
+    display: block;
+    background: white;
+    color: #111;
+    padding: 8px;
+    z-index: 9999;
+  }
+  /* hidden file input */
+  #importFile { display:none }
+  /* scrollbar */
+  ::-webkit-scrollbar{height:6px;width:8px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.03);border-radius:999px}
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-svg {
+    /* responsive sizing: min 48px, preferred 10vw, max 160px */
+    width: clamp(48px, 10vw, 160px);
+    height: auto;
+    display: block;
+  }
+
+  .brand-title {
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    color: #1565C0;
+    font-size: clamp(14px, 2.2vw, 22px);
+    margin: 0;
+    line-height: 1;
+  }
+
+  /* Small-screen adjustments: hide text to save space */
+  @media (max-width: 420px) {
+    .brand-title { display: none; }
+    .brand { gap: 8px; }
+  }
+
+</style>
+</head>
+<body>
+  <div class="brand" role="banner" aria-label="Expensio">
+    <svg class="logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 260" role="img" aria-labelledby="logoTitle logoDesc">
+      <title id="logoTitle">Expensio logo</title>
+      <desc id="logoDesc">Blue wallet with a green card peeking out.</desc>
+  
+      <g transform="translate(0,6)">
+        <rect x="60" y="8" width="170" height="110" rx="10" ry="10" transform="rotate(-13 145 62)" fill="#18C07E"/>
+        <rect x="40" y="70" width="220" height="120" rx="18" ry="18" fill="#1565C0"/>
+        <rect x="200" y="95" width="68" height="56" rx="12" ry="12" fill="#0F6AD1"/>
+        <rect x="208" y="103" width="52" height="40" rx="10" ry="10" fill-opacity="0.06" fill="#ffffff"/>
+        <circle cx="235" cy="125" r="8" fill="#ffffff"/>
+        <ellipse cx="150" cy="198" rx="92" ry="10" fill="#000" fill-opacity="0.08"/>
+      </g>
+  
+      <text x="150" y="238" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+            font-size="28" text-anchor="middle" fill="#1565C0">Expensio</text>
+    </svg>
+  
+    <h1 class="brand-title">Expensio — Monthly planner</h1>
+  </div>
+<header>
+  <div style="display:flex;gap:12px;align-items:center">
+    <h1>Expensio — monthly planner</h1>
+    <div class="tiny muted">(client-only · primary storage: localStorage)</div>
+  </div>
+</header>
+
+<div class="top-row card">
+  <div class="controls" style="flex:1">
+    <label for="month">Select month</label>
+    <input id="month" type="month" />
+    <label for="budget">Monthly budget</label>
+    <input id="budget" type="number" min="0" step="0.01" placeholder="0.00" />
+    <button id="saveAll" class="btn ghost">Save</button>
+    <button id="loadSaved" class="btn ghost">Load Saved</button>
+    <label style="display:flex;align-items:center;gap:6px;margin-left:6px"><input id="autoLoad" type="checkbox" /> Auto-load on start</label>
+  </div>
+
+  <div class="summary" style="min-width:320px;justify-content:flex-end">
+    <div style="text-align:right">
+      <div class="muted">Budget</div>
+      <div id="budgetDisplay" style="font-weight:700">—</div>
+    </div>
+    <div style="text-align:right">
+      <div class="muted">Month spent</div>
+      <div id="monthSpent" style="font-weight:700">—</div>
+    </div>
+
+    <div style="text-align:left">
+      <div class="muted">Used</div>
+      <div class="bar-wrap" title="budget usage">
+        <div id="usageBar" class="bar" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="layout">
+  <section>
+    <div class="card" style="padding:12px">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div class="muted">Weekdays:</div>
+        <div class="weekday">Sun</div><div class="weekday">Mon</div><div class="weekday">Tue</div><div class="weekday">Wed</div><div class="weekday">Thu</div><div class="weekday">Fri</div><div class="weekday">Sat</div>
+      </div>
+
+      <div id="calendar" class="calendar" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="muted">Selected date</div>
+          <div id="selectedDateDisplay" style="font-weight:700">—</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button id="exportDayPdf" class="btn">Export day → PDF</button>
+          <button id="exportMonthPdf" class="btn ghost" title="Exports entire month as single PDF">Export month → PDF</button>
+        </div>
+      </div>
+
+      <hr style="margin:10px 0;border-color:rgba(255,255,255,0.03)" />
+
+      <div class="day-editor">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label>Date</label>
+          <input id="dayDate" type="date" />
+          <label style="margin-left:8px">Daily allocation</label>
+          <input id="dayAlloc" type="number" min="0" step="0.01" placeholder="auto" />
+          <div class="muted tiny" style="margin-left:6px">leave empty to remove override; enter 0 to set allocation = 0</div>
+        </div>
+
+        <div class="items-list card" id="itemsContainer" style="padding:10px;background:transparent;border:0">
+          <div class="muted">No items yet — select a date and add items.</div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <div class="totals">
+            <div class="muted">Day total</div>
+            <div id="dayTotal" style="font-weight:700">0.00</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button id="addItemRow" class="add-item-btn">+ Add item</button>
+            <button id="saveDay" class="btn ghost">Save day</button>
+          </div>
+        </div>
+
+        <div style="margin-top:10px">
+          <div class="muted">Day status</div>
+          <div class="progress" style="margin-top:6px">
+            <i id="dayStatusBar" style="width:0%;background:var(--good)"></i>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px">
+            <div class="muted">Allocated</div><div id="allocatedDisplay">—</div>
+          </div>
+        </div>
+
+        <hr style="margin:10px 0;border-color:rgba(255,255,255,0.03)" />
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="setZero" class="btn ghost">Set allocation = 0</button>
+          <button id="clearDay" class="btn ghost">Clear day</button>
+          <div class="muted">Save/load: localStorage used (reliable on mobile)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="muted">Google Sheets export</div>
+          <div class="muted tiny">Login to append day rows to a sheet</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="gLogin" class="btn ghost">Login (Google)</button>
+          <button id="gExportDay" class="btn">Export day → Sheet</button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px" class="muted tiny">
+        To enable Google Sheets export: create OAuth 2.0 Client ID (Web) and enable Google Sheets API in Google Cloud Console.
+        Insert <strong>CLIENT_ID</strong> and <strong>API_KEY</strong> into the script variables in the app. The app runs fully client-side.
+      </div>
+    </div>
+
+    <div class="card tiny">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>Saved: <span id="lastSaved">never</span></div>
+        <div style="display:flex;gap:8px">
+          <button id="exportJson" class="btn ghost">Export JSON</button>
+          <button id="importJson" class="btn ghost">Import JSON</button>
+          <input id="importFile" type="file" accept="application/json" />
+          <button id="clearAll" class="btn ghost">Reset all</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <div class="muted">Tip: On mobile rotate to landscape for best calendar view. Data stored on this device only.</div>
+  <div class="muted">Made with ❤️ — client-only</div>
+</footer>
+
+<!-- hidden printable container for PDF export (rendered off-screen, not display:none) -->
+<div id="printable"></div>
+
+<script>
+/* =============================
+   Expensio — updated
+   Primary storage: localStorage
+   + Auto-save, manual save/load, export/import
+   + PDF generation fix (off-screen printable, visible to html2canvas)
+   ============================= */
+
+/* ---------- CONFIG ---------- */
+const STORAGE_KEY = 'expenses_v1_local_storage'; // primary
+const PREFS_KEY = 'expenses_v1_prefs';
+const COOKIE_NAME = 'expenses_v1_cookie_fallback';
+
+// Google
+const GOOGLE_CLIENT_ID = 'REPLACE_WITH_YOUR_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_API_KEY = 'REPLACE_WITH_YOUR_API_KEY';
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
+
+/* ---------- helpers ---------- */
+function nowISO(){ return new Date().toISOString(); }
+function savePrefs(prefs){
+  try{ localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }catch(e){ console.warn(e); }
+}
+function loadPrefs(){
+  try{ const raw = localStorage.getItem(PREFS_KEY); return raw ? JSON.parse(raw) : {autoLoad:true}; }
+  catch(e){ return {autoLoad:true}; }
+}
+
+/* ---------- persistence (localStorage primary) ---------- */
+function saveState(state){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // keep tiny cookie pointer for legacy, optional
+    try{ document.cookie = COOKIE_NAME + '=1;path=/;max-age=' + (60*60*24*365); }catch(e){}
+    document.getElementById('lastSaved').textContent = (new Date()).toLocaleString();
+  }catch(e){
+    console.error('Saving to localStorage failed', e);
+    alert('Saving failed: localStorage unavailable (private mode?). Use Export JSON to back up.');
+  }
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+    // fallback: try cookie value that might contain JSON (older behavior)
+    const match = document.cookie.match(new RegExp('(^| )' + COOKIE_NAME + '=([^;]+)'));
+    if (match){
+      try{ return JSON.parse(decodeURIComponent(match[2])); }catch(e){}
+    }
+    return null;
+  }catch(e){
+    console.error('Load failed', e);
+    return null;
+  }
+}
+
+/* ---------- utilities ---------- */
+function formatCurrency(n){ return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function ymd(date){ const d = new Date(date); const y = d.getFullYear(); const m = (d.getMonth()+1).toString().padStart(2,'0'); const day = d.getDate().toString().padStart(2,'0'); return `${y}-${m}-${day}`; }
+function daysInMonth(year, monthIndex){ return new Date(year, monthIndex+1, 0).getDate(); }
+
+/* ---------- DOM refs ---------- */
+const monthInput = document.getElementById('month');
+const budgetInput = document.getElementById('budget');
+const calendarEl = document.getElementById('calendar');
+const selectedDateDisplay = document.getElementById('selectedDateDisplay');
+const dayDateInput = document.getElementById('dayDate');
+const itemsContainer = document.getElementById('itemsContainer');
+const addItemRowBtn = document.getElementById('addItemRow');
+const dayTotalEl = document.getElementById('dayTotal');
+const dayAllocInput = document.getElementById('dayAlloc');
+const dayStatusBar = document.getElementById('dayStatusBar');
+const allocatedDisplay = document.getElementById('allocatedDisplay');
+const usageBar = document.getElementById('usageBar');
+const budgetDisplay = document.getElementById('budgetDisplay');
+const monthSpentEl = document.getElementById('monthSpent');
+const saveAllBtn = document.getElementById('saveAll');
+const saveDayBtn = document.getElementById('saveDay');
+const clearDayBtn = document.getElementById('clearDay');
+const lastSaved = document.getElementById('lastSaved');
+const exportDayPdfBtn = document.getElementById('exportDayPdf');
+const exportMonthPdfBtn = document.getElementById('exportMonthPdf');
+const gLoginBtn = document.getElementById('gLogin');
+const gExportDayBtn = document.getElementById('gExportDay');
+const clearAllBtn = document.getElementById('clearAll');
+const loadSavedBtn = document.getElementById('loadSaved');
+const autoLoadCheckbox = document.getElementById('autoLoad');
+const setZeroBtn = document.getElementById('setZero');
+const exportJsonBtn = document.getElementById('exportJson');
+const importJsonBtn = document.getElementById('importJson');
+const importFileInput = document.getElementById('importFile');
+
+let state = null;
+let selectedDate = null;
+let prefs = loadPrefs();
+
+/* ---------- default state ---------- */
+function createEmptyState(monthStr){
+  return {
+    month: monthStr,
+    budget: 0,
+    dailyAllocations: {},
+    items: {}
+  };
+}
+
+/* ---------- init ---------- */
+function init(){
+  // UI pref
+  autoLoadCheckbox.checked = !!prefs.autoLoad;
+  autoLoadCheckbox.addEventListener('change', ()=>{
+    prefs.autoLoad = autoLoadCheckbox.checked;
+    savePrefs(prefs);
+  });
+
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  // load saved if present (autoLoad controlled by prefs)
+  const saved = loadState();
+  if (saved && prefs.autoLoad){
+    state = saved;
+  } else {
+    state = createEmptyState(curMonth);
+  }
+
+  // UI initial
+  monthInput.value = state.month;
+  budgetInput.value = state.budget || '';
+  budgetDisplay.textContent = state.budget ? formatCurrency(state.budget) : '—';
+  const last = localStorage.getItem('expenses_last_saved');
+  if (last) lastSaved.textContent = (new Date(last)).toLocaleString();
+
+  const todayStr = ymd(now);
+  if (todayStr.startsWith(state.month)) selectedDate = todayStr;
+  else selectedDate = `${state.month}-01`;
+
+  dayDateInput.value = selectedDate;
+  renderCalendar();
+  openDay(selectedDate);
+  recalcMonthSummary();
+}
+init();
+
+/* ---------- calendar ---------- */
+function renderCalendar(){
+  calendarEl.innerHTML = '';
+  const [y, m] = state.month.split('-').map(Number);
+  const first = new Date(y, m-1, 1);
+  const startDay = first.getDay();
+  const total = daysInMonth(y, m-1);
+
+  for(let i=0;i<startDay;i++){ const blank = document.createElement('div'); blank.className='day'; blank.style.opacity='0.15'; calendarEl.appendChild(blank); }
+
+  for(let d=1; d<=total; d++){
+    const dateStr = `${state.month}-${String(d).padStart(2,'0')}`;
+    const dayEl = document.createElement('div');
+    dayEl.className = 'day card';
+    if (dateStr === ymd(new Date())) dayEl.classList.add('today');
+
+    const head = document.createElement('div');
+    head.style.display='flex'; head.style.justifyContent='space-between'; head.style.alignItems='center';
+    const num = document.createElement('div'); num.className='date-num'; num.textContent = d;
+    head.appendChild(num);
+
+    const actionWrap = document.createElement('div'); actionWrap.style.display='flex'; actionWrap.style.gap='6px';
+    const alloc = document.createElement('div'); alloc.className='muted tiny';
+    const allocated = computeDayAllocation(dateStr);
+    alloc.textContent = `alloc ${formatCurrency(allocated)}`;
+    alloc.title = 'Daily allocation (auto or user override)';
+    actionWrap.appendChild(alloc);
+    head.appendChild(actionWrap);
+    dayEl.appendChild(head);
+
+    const items = state.items[dateStr] || [];
+    const sum = items.reduce((s,it)=>s + Number(it.price||0),0);
+    const itemsSum = document.createElement('div'); itemsSum.className='items-sum';
+    itemsSum.textContent = `${items.length} item(s) • ${formatCurrency(sum)}`;
+    dayEl.appendChild(itemsSum);
+
+    const status = document.createElement('div'); status.className='progress'; status.style.marginTop='6px';
+    const inner = document.createElement('i');
+    const pct = allocated === 0 ? (sum>0 ? 100 : 0) : Math.min(100, Math.round((sum/allocated)*100));
+    inner.style.width = pct + '%'; inner.style.display = 'block';
+    if (sum <= allocated * 0.75) inner.style.background = 'linear-gradient(90deg,var(--good),#8ef7b9)';
+    else if (sum <= allocated) inner.style.background = 'linear-gradient(90deg,var(--warn),#ffd89b)';
+    else inner.style.background = 'linear-gradient(90deg,var(--bad),#ffb4b4)';
+    status.appendChild(inner);
+    dayEl.appendChild(status);
+
+    dayEl.addEventListener('click', ()=> openDay(dateStr));
+    calendarEl.appendChild(dayEl);
+  }
+}
+
+/* ---------- allocations ---------- */
+/* - explicit override (including 0) honored
+   - remaining budget split evenly across unfixed days */
+function computeDayAllocation(dateStr){
+  if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, dateStr)){
+    return Number(state.dailyAllocations[dateStr]) || 0;
+  }
+  const [y,m] = state.month.split('-').map(Number);
+  const totalDays = daysInMonth(y,m-1);
+  const budget = Number(state.budget || 0);
+
+  let fixedSum = 0;
+  let unfixedCount = 0;
+  for (let d = 1; d <= totalDays; d++){
+    const dt = `${state.month}-${String(d).padStart(2,'0')}`;
+    if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, dt)){
+      fixedSum += Number(state.dailyAllocations[dt] || 0);
+    } else {
+      unfixedCount++;
+    }
+  }
+  const remaining = Math.max(0, budget - fixedSum);
+  const perUnfixed = unfixedCount ? (remaining / unfixedCount) : 0;
+  return perUnfixed;
+}
+
+function recalcMonthSummary(){
+  const keys = Object.keys(state.items);
+  let monthSum = 0;
+  keys.forEach(k=>{
+    if (!k.startsWith(state.month)) return;
+    const items = state.items[k] || [];
+    monthSum += items.reduce((s,it)=>s + Number(it.price||0),0);
+  });
+  monthSpentEl.textContent = formatCurrency(monthSum);
+  const budget = Number(state.budget || 0);
+  budgetDisplay.textContent = budget ? formatCurrency(budget) : '—';
+  const usedPct = budget ? Math.min(100, Math.round((monthSum/budget)*100)) : 0;
+  usageBar.style.width = usedPct + '%';
+  if (usedPct <= 75) usageBar.style.background = 'linear-gradient(90deg,var(--good),#8ef7b9)';
+  else if (usedPct <= 100) usageBar.style.background = 'linear-gradient(90deg,var(--warn),#ffd89b)';
+  else usageBar.style.background = 'linear-gradient(90deg,var(--bad),#ffb4b4)';
+
+  renderCalendar();
+}
+
+/* ---------- day editor ---------- */
+function openDay(dateStr){
+  selectedDate = dateStr;
+  selectedDateDisplay.textContent = dateStr;
+  dayDateInput.value = dateStr;
+  const items = state.items[dateStr] ? structuredClone(state.items[dateStr]) : [];
+  renderItems(items);
+  const alloc = computeDayAllocation(dateStr);
+  // show override if present (including 0). If not present show computed (but empty input removes override)
+  if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, dateStr)){
+    dayAllocInput.value = state.dailyAllocations[dateStr];
+  } else {
+    dayAllocInput.value = alloc || '';
+  }
+  updateDayTotals();
+}
+
+/* ---------- items UI ---------- */
+function renderItems(items){
+  itemsContainer.innerHTML = '';
+  if (!items.length){
+    itemsContainer.innerHTML = '<div class="muted">No items yet — use + Add item</div>';
+    return;
+  }
+  items.forEach((it, idx)=>{
+    const row = document.createElement('div'); row.className='row';
+    const name = document.createElement('input'); name.type='text'; name.value = it.item || ''; name.placeholder = 'item';
+    const price = document.createElement('input'); price.type='number'; price.min=0; price.step='0.01'; price.value = it.price || '';
+    const del = document.createElement('button'); del.innerText='✖'; del.title='Delete item';
+    del.addEventListener('click', ()=> {
+      const cur = state.items[selectedDate] || [];
+      cur.splice(idx,1);
+      state.items[selectedDate] = cur;
+      openDay(selectedDate);
+      saveState(state);
+      localStorage.setItem('expenses_last_saved', nowISO());
+      recalcMonthSummary();
+    });
+    name.addEventListener('input', ()=> {
+      const cur = state.items[selectedDate] || [];
+      cur[idx] = cur[idx] || {};
+      cur[idx].item = name.value;
+      state.items[selectedDate] = cur;
+      updateDayTotals();
+    });
+    price.addEventListener('input', ()=> {
+      const cur = state.items[selectedDate] || [];
+      cur[idx] = cur[idx] || {};
+      cur[idx].price = Number(price.value || 0);
+      state.items[selectedDate] = cur;
+      updateDayTotals();
+    });
+
+    row.append(name, price, del);
+    itemsContainer.appendChild(row);
+  });
+}
+
+/* ---------- add row ---------- */
+addItemRowBtn.addEventListener('click', ()=>{
+  const items = state.items[selectedDate] || [];
+  items.push({item:'', price:0});
+  state.items[selectedDate] = items;
+  renderItems(items);
+  saveState(state);
+  localStorage.setItem('expenses_last_saved', nowISO());
+  recalcMonthSummary();
+});
+
+/* ---------- totals/status ---------- */
+function updateDayTotals(){
+  const items = state.items[selectedDate] || [];
+  const sum = items.reduce((s,it)=>s + Number(it.price||0),0);
+  dayTotalEl.textContent = formatCurrency(sum);
+  const allocated = computeDayAllocation(selectedDate);
+  allocatedDisplay.textContent = formatCurrency(allocated);
+  const pct = allocated === 0 ? (sum>0 ? 100 : 0) : Math.min(100, Math.round((sum/allocated)*100));
+  dayStatusBar.style.width = pct + '%';
+  if (sum <= allocated * 0.75) dayStatusBar.style.background = 'linear-gradient(90deg,var(--good),#8ef7b9)';
+  else if (sum <= allocated) dayStatusBar.style.background = 'linear-gradient(90deg,var(--warn),#ffd89b)';
+  else dayStatusBar.style.background = 'linear-gradient(90deg,var(--bad),#ffb4b4)';
+}
+
+/* ---------- save/load day ---------- */
+saveDayBtn.addEventListener('click', ()=>{
+  const newDate = ymd(dayDateInput.value);
+  if (!state.items[selectedDate]) state.items[selectedDate] = [];
+  const items = state.items[selectedDate];
+
+  if (newDate !== selectedDate){
+    state.items[newDate] = items;
+    delete state.items[selectedDate];
+    if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, selectedDate)){
+      state.dailyAllocations[newDate] = state.dailyAllocations[selectedDate];
+      delete state.dailyAllocations[selectedDate];
+    }
+    selectedDate = newDate;
+  }
+
+  const valStr = dayAllocInput.value;
+  if (valStr === '' || valStr === null){
+    if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, selectedDate)){
+      delete state.dailyAllocations[selectedDate];
+    }
+  } else {
+    const parsed = Number(valStr);
+    if (!state.dailyAllocations) state.dailyAllocations = {};
+    state.dailyAllocations[selectedDate] = parsed;
+  }
+
+  saveState(state);
+  localStorage.setItem('expenses_last_saved', nowISO());
+  recalcMonthSummary();
+  renderCalendar();
+  openDay(selectedDate);
+});
+
+/* ---------- convenience: set allocation zero ---------- */
+setZeroBtn.addEventListener('click', ()=>{
+  if (!state.dailyAllocations) state.dailyAllocations = {};
+  state.dailyAllocations[selectedDate] = 0;
+  saveState(state);
+  localStorage.setItem('expenses_last_saved', nowISO());
+  recalcMonthSummary();
+  openDay(selectedDate);
+});
+
+/* ---------- clear day ---------- */
+clearDayBtn.addEventListener('click', ()=>{
+  if (!confirm('Clear all items for ' + selectedDate + ' ?')) return;
+  delete state.items[selectedDate];
+  if (state.dailyAllocations && Object.prototype.hasOwnProperty.call(state.dailyAllocations, selectedDate)){
+    delete state.dailyAllocations[selectedDate];
+  }
+  saveState(state);
+  localStorage.setItem('expenses_last_saved', nowISO());
+  recalcMonthSummary();
+  openDay(selectedDate);
+});
+
+/* ---------- top-level save/load ---------- */
+saveAllBtn.addEventListener('click', ()=>{
+  state.budget = Number(budgetInput.value || 0);
+  state.month = monthInput.value;
+  saveState(state);
+  localStorage.setItem('expenses_last_saved', nowISO());
+  recalcMonthSummary();
+  renderCalendar();
+  alert('Saved to device (localStorage).');
+});
+
+loadSavedBtn.addEventListener('click', ()=>{
+  const s = loadState();
+  if (!s){ alert('No saved data found on this device.'); return; }
+  if (!confirm('Load saved data from device? This will replace your current unsaved changes.')) return;
+  state = s;
+  monthInput.value = state.month;
+  budgetInput.value = state.budget || '';
+  recalcMonthSummary();
+  renderCalendar();
+  // select a sensible selectedDate (today or first)
+  const now = ymd(new Date());
+  selectedDate = now.startsWith(state.month) ? now : `${state.month}-01`;
+  openDay(selectedDate);
+  alert('Loaded saved data.');
+});
+
+/* ---------- month/budget live ---------- */
+monthInput.addEventListener('change', ()=>{
+  state.month = monthInput.value;
+  selectedDate = `${state.month}-01`;
+  dayDateInput.value = selectedDate;
+  saveState(state);
+  recalcMonthSummary();
+  renderCalendar();
+  openDay(selectedDate);
+});
+budgetInput.addEventListener('input', ()=>{
+  budgetDisplay.textContent = budgetInput.value ? formatCurrency(budgetInput.value) : '—';
+  // do not persist until user clicks Save; but recalc live visuals
+  state.budget = Number(budgetInput.value || 0); // keep temporary in state for visuals
+  recalcMonthSummary();
+});
+
+/* ---------- export/import JSON ---------- */
+exportJsonBtn.addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = `${state.month || 'expenses'}-backup.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+importJsonBtn.addEventListener('click', ()=> importFileInput.click());
+importFileInput.addEventListener('change', async (ev)=>{
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!confirm('Importing will replace current data. Proceed?')) return;
+    state = parsed;
+    saveState(state);
+    monthInput.value = state.month;
+    budgetInput.value = state.budget || '';
+    recalcMonthSummary();
+    renderCalendar();
+    openDay(Object.keys(state.items)[0] || `${state.month}-01`);
+    alert('Import successful.');
+  }catch(e){
+    alert('Import failed: invalid JSON.');
+  } finally {
+    importFileInput.value = '';
+  }
+});
+
+/* ---------- export day/month to PDF ---------- */
+function createPrintableForDate(dateStr){
+  const items = state.items[dateStr] || [];
+  const allocated = computeDayAllocation(dateStr);
+  const sum = items.reduce((s,it)=>s + Number(it.price||0),0);
+  const container = document.createElement('div');
+  container.style.padding='18px'; container.style.color='#111'; container.style.background='#fff'; container.style.fontFamily='sans-serif';
+  const h = document.createElement('h2'); h.textContent = `Expenses — ${dateStr}`; h.style.marginTop='0';
+  container.appendChild(h);
+  const p = document.createElement('p'); p.textContent = `Allocated: ${formatCurrency(allocated)} · Spent: ${formatCurrency(sum)}`;
+  container.appendChild(p);
+  const table = document.createElement('table'); table.style.width='100%'; table.style.borderCollapse='collapse';
+  const thead = document.createElement('thead'); thead.innerHTML = '<tr><th style="text-align:left">Item</th><th style="text-align:right">Price</th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  items.forEach(it=>{
+    const r = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.textContent = it.item || '-';
+    const td2 = document.createElement('td'); td2.textContent = formatCurrency(it.price||0); td2.style.textAlign='right';
+    td1.style.padding='6px 4px'; td2.style.padding='6px 4px';
+    r.appendChild(td1); r.appendChild(td2);
+    tbody.appendChild(r);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+  const foot = document.createElement('div'); foot.style.marginTop='12px'; foot.style.fontSize='0.9rem';
+  foot.textContent = `Generated: ${new Date().toLocaleString()}`;
+  container.appendChild(foot);
+  return container;
+}
+
+async function runHtml2Pdf(filename){
+  // html2pdf returns a promise. We'll rely on that to hide printable after done.
+  const printable = document.getElementById('printable');
+  const opt = {
+    margin:       10,
+    filename,
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2, useCORS: true, allowTaint: true },
+    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  // ensure element is off-screen but present in DOM (we set #printable to be off-screen in CSS).
+  // Wait a tick so rendering is complete
+  await new Promise(r => setTimeout(r, 120));
+  return html2pdf().from(printable).set(opt).save();
+}
+
+exportDayPdfBtn.addEventListener('click', async ()=>{
+  const printable = document.getElementById('printable');
+  printable.innerHTML = '';
+  printable.appendChild(createPrintableForDate(selectedDate));
+  try{
+    await runHtml2Pdf(`${selectedDate}-expenses.pdf`);
+  }catch(e){
+    console.error('PDF export failed', e);
+    alert('PDF export failed. Try again.');
+  }finally{
+    printable.innerHTML = '';
+  }
+});
+
+exportMonthPdfBtn.addEventListener('click', async ()=>{
+  const [y,m] = state.month.split('-').map(Number);
+  const totalDays = daysInMonth(y,m-1);
+  const printable = document.getElementById('printable');
+  printable.innerHTML = '';
+  for(let d=1; d<=totalDays; d++){
+    const dateStr = `${state.month}-${String(d).padStart(2,'0')}`;
+    printable.appendChild(createPrintableForDate(dateStr));
+    if (d < totalDays){
+      const br = document.createElement('div'); br.style.pageBreakAfter='always';
+      printable.appendChild(br);
+    }
+  }
+  try{
+    await runHtml2Pdf(`${state.month}-expenses.pdf`);
+  }catch(e){
+    console.error('PDF export failed', e);
+    alert('PDF export failed. Try again.');
+  }finally{
+    printable.innerHTML = '';
+  }
+});
+
+/* ---------- Google Sheets---------- */
+
+let gapiInited = false;
+function gapiLoad(){
+  if (gapiInited) return;
+  gapi.load('client:auth2', async () => {
+    try{
+      await gapi.client.init({
+        apiKey: GOOGLE_API_KEY,
+        clientId: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_SCOPES,
+        discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"]
+      });
+      gapiInited = true;
+      console.log('gapi initialized');
+    }catch(e){ console.error('gapi init failed', e); alert('Google API init failed - check credentials in script.'); }
+  });
+}
+gLoginBtn.addEventListener('click', ()=>{
+  if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.includes('REPLACE')) {
+    alert('Please set GOOGLE_CLIENT_ID and GOOGLE_API_KEY at the top of the file to enable Google login.');
+    return;
+  }
+  gapiLoad();
+  setTimeout(()=> {
+    if (!gapiInited) { alert('Google API not ready yet, try again in a second.'); return; }
+    const authInstance = gapi.auth2.getAuthInstance();
+    authInstance.signIn().then(()=> {
+      alert('Signed in to Google. You can now export a day to your sheet.');
+    }).catch(e=>{ console.error(e); alert('Sign-in failed'); });
+  }, 600);
+});
+gExportDayBtn.addEventListener('click', async ()=>{
+  if (!gapiInited || !gapi.auth2.getAuthInstance().isSignedIn.get()){
+    alert('Please login with Google first (Login (Google) button).');
+    return;
+  }
+  const spreadsheetId = prompt('Target Spreadsheet ID (from its URL) — this will append rows:');
+  if (!spreadsheetId) return;
+  const sheetName = prompt('Sheet name (eg. Sheet1):','Sheet1');
+  if (!sheetName) return;
+  const items = state.items[selectedDate] || [];
+  if (!items.length){ alert('No items to export for this day.'); return; }
+  const values = items.map(it => [selectedDate, it.item || '', Number(it.price||0)]);
+  const body = { values };
+  try{
+    const res = await gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:C`,
+      valueInputOption: 'USER_ENTERED',
+      resource: body
+    });
+    alert('Exported ' + items.length + ' rows to spreadsheet.');
+  }catch(e){
+    console.error(e);
+    alert('Export failed: ' + (e.message || e.result?.error?.message || 'unknown'));
+  }
+});
+
+/* ---------- autosave / unload ---------- */
+// auto-save every 8s if changed (lightweight)
+let lastSerialized = JSON.stringify(state);
+setInterval(()=>{
+  try{
+    const cur = JSON.stringify(state);
+    if (cur !== lastSerialized){
+      localStorage.setItem(STORAGE_KEY, cur);
+      localStorage.setItem('expenses_last_saved', nowISO());
+      lastSerialized = cur;
+    }
+  }catch(e){}
+}, 8000);
+
+// also save on important events/unload
+window.addEventListener('beforeunload', ()=>{
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem('expenses_last_saved', nowISO());
+  }catch(e){}
+});
+
+// if localStorage changed in another tab, refresh view
+window.addEventListener('storage', (e)=>{
+  if (e.key === STORAGE_KEY){
+    const loaded = loadState();
+    if (loaded){
+      state = loaded;
+      renderCalendar();
+      recalcMonthSummary();
+      openDay(selectedDate);
+    }
+  }
+});
+</script>
+</body>
+</html>
